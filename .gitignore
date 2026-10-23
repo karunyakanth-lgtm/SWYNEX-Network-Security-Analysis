@@ -1,2 +1,8 @@
+# Python cache and compiled files
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Local captures and generated personal analysis output
+*.pcapng
+aa.pcap
+my_findings.md
