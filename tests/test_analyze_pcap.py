@@ -68,6 +68,19 @@ class AnalyzerCliTests(unittest.TestCase):
             with self.subTest(indicator=indicator):
                 self.assertIn(indicator, result.stdout)
 
+    def test_truncated_capture_fails_with_clear_error(self):
+        broken = self.workdir / "broken.pcap"
+        broken.write_bytes(b"\\xd4\\xc3\\xb2\\xa1")
+        result = subprocess.run(
+            [sys.executable, str(ANALYZER), str(broken)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Truncated pcap global header", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_output_option_writes_markdown_report(self):
         output = self.workdir / "findings.md"
         result = subprocess.run(
