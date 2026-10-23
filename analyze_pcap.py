@@ -278,14 +278,19 @@ def main():
     ap.add_argument("pcap", help="capture file (.pcap or .pcapng)")
     ap.add_argument("-o", "--output", help="write markdown findings to this file")
     args = ap.parse_args()
-    report = render(args.pcap, *analyze(args.pcap))
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as fh:
-            fh.write(report)
-        print(f"Wrote {args.output}")
-    else:
-        sys.stdout.write(report)
+    try:
+        report = render(args.pcap, *analyze(args.pcap))
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as fh:
+                fh.write(report)
+            print(f"Wrote {args.output}")
+        else:
+            sys.stdout.write(report)
+    except (OSError, ValueError, struct.error) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
