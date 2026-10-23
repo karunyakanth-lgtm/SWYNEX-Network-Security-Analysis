@@ -50,34 +50,78 @@ def read_packets(path):
 
 
 def _read_pcap(data):
+    if len(data) < 24:
+        raise ValueError("Truncated pcap global header")
     endian = "<" if data[:4] in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1") else ">"
     linktype = struct.unpack(endian + "I", data[20:24])[0]
     if linktype != 1:
         raise ValueError(f"Unsupported link type {linktype}; expected Ethernet (1)")
     pos = 24
-    while pos + 16 <= len(data):
-        _, _, incl, _ = struct.unpack(endian + "IIII", data[pos:pos + 16])
+    while pos < len(data):
+        if len(data) - pos < 16:
+            raise ValueError("Truncated pcap packet header")
+        _, _, incl, orig = struct.unpack(endian + "IIII", data[pos:pos + 16])
         pos += 16
+        if incl > len(data) - pos:
+            raise ValueError("Truncated pcap packet data")
+        if incl > orig:
+            raise ValueError("Invalid pcap packet: captured length exceeds original length")
         yield data[pos:pos + incl]
         pos += incl
 
 
 def _read_pcapng(data):
     pos, endian = 0, "<"
-    while pos + 12 <= len(data):
+    interface_linktypes = []
+    while pos < len(data):
+        if len(data) - pos < 12:
+            raise ValueError("Truncated pcapng block header")
         if data[pos:pos + 4] == b"\x0a\x0d\x0d\x0a":  # section header
-            endian = "<" if data[pos + 8:pos + 12] == b"\x4d\x3c\x2b\x1a" else ">"
+            if len(data) - pos < 28:
+                raise ValueError("Truncated pcapng section header")
+            bom = data[pos + 8:pos + 12]
+            if bom == b"\x4d\x3c\x2b\x1a":
+                endian = "<"
+            elif bom == b"\x1a\x2b\x3c\x4d":
+                endian = ">"
+            else:
+                raise ValueError("Invalid pcapng byte-order magic")
+            interface_linktypes = []
         btype, blen = struct.unpack(endian + "II", data[pos:pos + 8])
-        if blen < 12:
-            break
+        if blen < 12 or blen % 4:
+            raise ValueError("Invalid pcapng block length")
+        if pos + blen > len(data):
+            raise ValueError("Truncated pcapng block")
+        trailing_len = struct.unpack(endian + "I", data[pos + blen - 4:pos + blen])[0]
+        if trailing_len != blen:
+            raise ValueError("Mismatched pcapng block lengths")
         body = data[pos + 8:pos + blen - 4]
-        if btype == 6 and len(body) >= 20:        # enhanced packet block
-            cap_len = struct.unpack(endian + "I", body[12:16])[0]
+        if btype == 1:  # interface description block
+            if len(body) < 8:
+                raise ValueError("Truncated pcapng interface description")
+            linktype = struct.unpack(endian + "H", body[:2])[0]
+            if linktype != 1:
+                raise ValueError(f"Unsupported pcapng link type {linktype}; expected Ethernet (1)")
+            interface_linktypes.append(linktype)
+        elif btype == 6:  # enhanced packet block
+            if len(body) < 20:
+                raise ValueError("Truncated pcapng enhanced packet block")
+            interface_id, = struct.unpack(endian + "I", body[:4])
+            cap_len, = struct.unpack(endian + "I", body[12:16])
+            if interface_id >= len(interface_linktypes):
+                raise ValueError(f"Unknown pcapng interface ID {interface_id}")
+            if cap_len > len(body) - 20:
+                raise ValueError("Truncated pcapng packet data")
             yield body[20:20 + cap_len]
-        elif btype == 3 and len(body) >= 4:       # simple packet block
-            yield body[4:]
+        elif btype == 3:  # simple packet block (implicitly interface 0)
+            if len(body) < 4:
+                raise ValueError("Truncated pcapng simple packet block")
+            if not interface_linktypes:
+                raise ValueError("pcapng packet appears before an interface description")
+            orig_len, = struct.unpack(endian + "I", body[:4])
+            cap_len = min(orig_len, len(body) - 4)
+            yield body[4:4 + cap_len]
         pos += blen
-
 
 # ----------------------------------------------------------------- decoding
 def mac(b):
@@ -113,17 +157,32 @@ def analyze(path):
             proto["Other"] += 1
             continue
 
+        # Validate the IPv4 header and respect the declared IP packet length.
+        if payload[0] >> 4 != 4:
+            proto["Other"] += 1
+            continue
         ihl = (payload[0] & 0x0F) * 4
-        ip_proto = payload[9]
-        src = socket.inet_ntoa(payload[12:16])
+        total_len = struct.unpack("!H", payload[2:4])[0]
+        if ihl < 20 or total_len < ihl or ihl > len(payload) or total_len > len(payload):
+            continue
+        # Non-initial IPv4 fragments do not start with a transport header.
+        frag_field = struct.unpack("!H", payload[6:8])[0]
+        if frag_field & 0x1FFF:
+            proto["Other"] += 1
+            continue
+        ip_packet = payload[:total_len]
+        ip_proto = ip_packet[9]
+        src = socket.inet_ntoa(ip_packet[12:16])
         talkers[src] += 1
-        l4 = payload[ihl:]
+        l4 = ip_packet[ihl:]
 
         if ip_proto == 6 and len(l4) >= 20:                   # TCP
             proto["TCP"] += 1
             sport, dport = struct.unpack("!HH", l4[:4])
             flags = l4[13]
             offset = (l4[12] >> 4) * 4
+            if offset < 20 or offset > len(l4):
+                continue
             if flags & 0x12 == 0x02:                          # SYN, no ACK
                 syn_ports[src].add(dport)
             body = l4[offset:]
@@ -133,7 +192,7 @@ def analyze(path):
                         cleartext[CLEARTEXT_PORTS[port]] += 1
                         break
                 if CRED_PATTERN.search(body):
-                    dst = socket.inet_ntoa(payload[16:20])
+                    dst = socket.inet_ntoa(ip_packet[16:20])
                     cred_hits.add((src, dst, dport))
         elif ip_proto == 17 and len(l4) >= 8:                 # UDP
             proto["UDP"] += 1
