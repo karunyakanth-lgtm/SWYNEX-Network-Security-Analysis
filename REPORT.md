@@ -1,29 +1,36 @@
 # Defensive Network Traffic Analysis Report
 
-**Author:** [Your name]
-**Date:** 23 October 2026
-**Internship task:** SWYNEX Technologies, Task 2 (Network Security Analysis)
+**Author:** [Your name]  
+**Date:** 23 October 2026  
+**Internship task:** SWYNEX Technologies — Task 2: Network Security Analysis
+
+> **Submission check:** This report contains preliminary notes from the lab capture. Complete every item marked `[VERIFY]` against your actual capture before submitting. Do not invent packet evidence or describe an unverified indicator as a confirmed finding.
 
 ## 1. Scope and environment
 
-- **Capture source:** my own lab traffic, captured in my own Kali Linux virtual machine. No third-party networks or systems were targeted.
-- **Lab setup:** Kali Linux VM in VirtualBox using NAT networking. The VM's address is `10.0.2.15`. The upstream gateway seen in the capture is `192.168.31.1`.
-- **Tools:** Wireshark (capture and manual verification) and `analyze_pcap.py` (a Python script written for this task that summarises a capture and flags common security concerns).
-- **Capture file:** `aa.pcapng`, 964 packets.
-- **Activity during capture:** [Fill in, for example: browsed websites in Firefox, opened Discord, visited http://neverssl.com on purpose to generate plain-HTTP traffic.]
+- **Capture source:** Personal Kali Linux VM in VirtualBox using NAT, as recorded in the lab notes.
+- **VM address:** `10.0.2.15`, according to the notes.
+- **Tools:** Wireshark and the repository's Python analyzer.
+- **Capture:** `aa.pcapng`, reported in the notes as 964 packets.
+- **Activity during capture:** [VERIFY: list the browsing or applications you actually used.]
+
+Keep the raw capture local unless you have reviewed it for private data and intentionally decided it is safe to publish.
 
 ## 2. Method
 
-1. Captured traffic on the VM's network interface with Wireshark.
-2. Ran `python3 analyze_pcap.py aa.pcapng -o my_findings.md` to get a protocol summary, top talkers, DNS activity and automated security checks.
-3. Reviewed the results manually in Wireshark (Protocol Hierarchy, Conversations and display filters) to confirm what the script reported.
+1. Captured traffic visible to the lab VM in Wireshark.
+2. Ran `python3 analyze_pcap.py aa.pcapng -o my_findings.md`.
+3. Used Wireshark display filters and packet details to check the analyzer's indicators.
+4. Recorded both possible findings and checks that did not trigger.
 
-The script checks for: cleartext protocols (HTTP, FTP, Telnet, SMTP, POP3, IMAP), credentials sent in cleartext, SYN port scans, ARP spoofing, high ICMP volume, and unusually long DNS labels (possible tunnelling).
+The analyzer uses heuristics. A match is a lead to investigate, not proof of an attack or data exposure.
 
 ## 3. Protocol overview
 
-| Protocol | Packets |
-|---|---|
+The current notes contain these counts. **[VERIFY]** Recalculate them from the original capture and compare them with the analyzer output before submission.
+
+| Protocol | Packets in draft notes |
+|---|---:|
 | UDP | 698 |
 | TCP | 241 |
 | DNS | 47 |
@@ -31,89 +38,91 @@ The script checks for: cleartext protocols (HTTP, FTP, Telnet, SMTP, POP3, IMAP)
 | ICMP | 10 |
 | ARP | 4 |
 
-DNS is carried over UDP, so the 47 DNS packets are a subset of the UDP total. Most of the capture is UDP, which is typical of modern traffic such as QUIC and real-time voice or video.
+DNS traffic carried over UDP is a subset of UDP traffic, so do not add DNS to UDP as though the categories were mutually exclusive.
 
-_Screenshot: Wireshark Statistics > Protocol Hierarchy (`screenshots/protocol-hierarchy.png`)_
+**Screenshot:** The repository contains several timestamp-named screenshots and `screenshots/swynex-task2-findings.png`. [VERIFY which image shows Protocol Hierarchy; use its actual filename and ensure it contains readable evidence.]
 
 ## 4. Traffic analysis
 
-### Top talkers (by source IP)
+The following figures are carried over from the working notes and must be checked against the capture before they are presented as final results.
 
-| IP address | Packets | Notes |
-|---|---|---|
-| 162.159.138.232 | 491 | Largest source, mostly UDP. [Verify in Wireshark: protocol (for example QUIC) and owner. The address appears to belong to a CDN provider and the DNS lookups included Discord.] |
-| 10.0.2.15 | 324 | The lab VM itself |
-| 34.149.226.178 | 46 | [Verify in Wireshark] |
-| 151.101.157.91 | 43 | [Verify in Wireshark] |
-| 192.168.31.1 | 23 | Local gateway (DNS and ARP replies) |
+| IP address | Packets in draft notes | Required verification |
+|---|---:|---|
+| `162.159.138.232` | 491 | Inspect ports, protocol and packet direction; do not infer the application from DNS names alone |
+| `10.0.2.15` | 324 | Confirm source-host count |
+| `34.149.226.178` | 46 | Confirm source-host count and context |
+| `151.101.157.91` | 43 | Confirm source-host count and context |
+| `192.168.31.1` | 23 | Confirm this address is the gateway in this capture |
 
-### Most queried DNS names
+The working notes list DNS queries for names including `discord.gg`, `content-signature-2.cdn.mozilla.net`, `discord.com`, `neverssl.com`, and `ads.mozilla.org`. [VERIFY query counts and whether each name is relevant to your own activity.]
 
-| Domain | Queries | Notes |
-|---|---|---|
-| discord.gg | 12 | Discord application traffic |
-| content-signature-2.cdn.mozilla.net | 11 | Firefox background security and content checks |
-| discord.com | 6 | Discord |
-| neverssl.com | 6 | Visited deliberately to test cleartext HTTP |
-| ads.mozilla.org | 4 | Firefox |
+## 5. Security observations
 
-No DNS names with unusually long labels were found, so there are no signs of DNS tunnelling.
+### Observation A: TCP data on port 80
 
-## 5. Security findings
+- **Draft status:** Possible cleartext HTTP indicator; not yet established as a confirmed HTTP request.
+- **Evidence in notes:** The analyzer reportedly counted one TCP segment carrying data on port 80.
+- **Verify in Wireshark:** Use `tcp.port == 80 && tcp.len > 0`, then inspect the packet details and TCP stream. Use `http` to check whether Wireshark decodes a valid HTTP request or response.
+- **Record only after verification:** packet number, source/destination IP and ports, request line or response status if visible, and the screenshot filename.
+- **Risk if confirmed:** HTTP content is not encrypted and may be readable or modifiable by someone on the network path. Do not claim credentials, cookies or personal data were exposed unless the packet actually shows that.
+- **Recommendation:** Prefer HTTPS and configure HTTPS redirects and HSTS on servers where appropriate.
 
-### Finding 1: Cleartext HTTP traffic
+**Important:** The original notes say the connection to `neverssl.com` failed before any HTTP request was sent. That does not automatically explain the separate port-80 data indicator. Inspect the packet number, TCP stream and endpoint tuple to determine whether they are different flows. Do not attribute the port-80 packet to `neverssl.com` unless the capture proves it.
 
-- **Severity:** Medium
-- **Evidence:** 1 HTTP packet with data, a request to `neverssl.com` (DNS shows 6 lookups for this domain). [Add Wireshark screenshot of the `http` filter: `screenshots/http-cleartext.png`]
-- **Why it matters:** HTTP sends everything unencrypted. Anyone on the same network path (public Wi-Fi, a compromised router, an attacker running ARP spoofing) can read or modify the pages and any data sent, including logins and cookies.
-- **Wireshark filter used to verify:** `http`
-- **Context:** This traffic was generated on purpose to test detection. No credentials were sent and the script did not flag any.
-- **Recommendation:** Use HTTPS everywhere, enable the browser's HTTPS-only mode, and use a VPN on untrusted networks. Servers should redirect HTTP to HTTPS and use HSTS.
+### Observation B: Failed connection attempt
 
-### Checks that found nothing
+- **Draft status:** Informational; verify packet numbers and sequence before submission.
+- **Working notes:** DNS reportedly resolved `neverssl.com` to `34.223.124.45`; SYN retransmissions were followed by a reset, and the notes say no HTTP request was sent.
+- **Wireshark filters:** `ip.addr == 34.223.124.45` and `tcp.analysis.retransmission`.
+- **Interpretation:** A failed connection can be caused by filtering, service availability or network conditions; it is not evidence of an attack by itself.
 
-| Check | Result |
+### Observation C: Large UDP flow
+
+- **Draft status:** Needs protocol verification.
+- **Working notes:** `162.159.138.232` accounted for 491 of 964 packets, mostly UDP.
+- **Wireshark filter:** `ip.addr == 162.159.138.232`.
+- **[VERIFY]** Check UDP ports and packet details before describing this as QUIC, Discord voice/video or another specific application. A high packet count alone is not a vulnerability.
+- **Recommendation:** On a managed network, baseline expected traffic and investigate large unexplained flows.
+
+### Checks reported as not triggering
+
+The notes report no matches for these checks. Confirm the latest analyzer output before presenting them as final.
+
+| Check | Preliminary result |
 |---|---|
-| Credentials in cleartext | None found |
-| TCP SYN port scan | None detected |
-| ARP spoofing (one IP with several MAC addresses) | None detected (4 ARP packets, no conflict) |
-| High-volume ICMP | None (10 ICMP packets, below the threshold of 50) |
-| Long DNS labels (tunnelling) | None |
+| Credential-like text patterns | No matches reported |
+| TCP SYN scan (15 or more distinct ports) | None reported |
+| ARP address/MAC conflict | None reported |
+| High ICMP volume (50 or more packets from one source) | None reported |
+| DNS label longer than 40 characters | None reported |
 
-This is a good result for a normal browsing session: no sign of scanning, spoofing or credential exposure.
+A heuristic that did not trigger does not prove the network is free of threats.
 
-### Observation (not a vulnerability): high-volume UDP to one host
+## 6. Recommendations
 
-- **Observation:** `162.159.138.232` accounts for about half of all packets (491 of 964), mostly UDP.
-- **Assessment:** [After checking in Wireshark, state what it is, for example QUIC web traffic or Discord voice and video.] High volume to a single known service during active use is normal, but a defender would still check whether such flows are expected on the network.
-- **Wireshark filter used to verify:** `ip.addr == 162.159.138.232`
-- **Recommendation:** On a managed network, baseline normal traffic per host and alert on large unexplained flows to unfamiliar destinations.
-
-## 6. Recommendations summary
-
-| Priority | Action | Control type |
-|---|---|---|
-| 1 | Use HTTPS only; enable HTTPS-only mode in the browser; add HSTS on servers | Preventive |
-| 2 | Use a VPN on untrusted networks | Preventive |
-| 3 | Keep an IDS (for example Snort or Suricata) watching for scans, ARP conflicts and DNS anomalies | Detective |
-| 4 | Baseline normal traffic and review large flows to unfamiliar hosts | Detective |
+1. Prefer encrypted protocols and verify HTTP traffic before describing exposure.
+2. Investigate failed connections using packet sequences and endpoint tuples.
+3. Establish a baseline before treating a large flow as suspicious.
+4. Treat analyzer results as leads and manually verify them in Wireshark.
+5. Improve parser validation and protocol coverage before relying on the tool operationally.
 
 ## 7. Limitations
 
-- Short capture from a single machine, so it shows only that machine's view of the network.
-- Most traffic is encrypted (HTTPS/QUIC), so payload contents cannot be inspected. Analysis is based on metadata such as addresses, ports and DNS names.
-- The script decodes IPv4 over Ethernet only. The 11 "Other" packets were not decoded (likely IPv6 or non-IP frames).
-- Detection rules are simple thresholds and indicate possible issues, not proof. They were confirmed manually in Wireshark.
+- Short capture from one VM; only traffic visible at that capture point is represented.
+- Encrypted traffic limits payload inspection.
+- The custom analyzer focuses on IPv4 over Ethernet and does not fully decode IPv6 or all link-layer formats.
+- Detection rules are simple heuristics and can miss threats or produce false positives.
+- Some counts and interpretations above are copied from working notes and still require verification.
 
-## 8. Conclusion and learnings
+## 8. Conclusion and learning
 
-I captured my own VM's traffic and analysed it with Wireshark and a custom Python tool. The only security concern was one deliberate plain-HTTP request, which shows how visible unencrypted traffic is to anyone who can capture it. Everything else matched normal browsing: DNS lookups, encrypted web traffic and gateway ARP replies, with no scanning, spoofing or credential leaks. [Add one sentence on what you personally learned.]
+[VERIFY: write a conclusion that matches the final packet evidence after resolving the port-80 / `neverssl.com` discrepancy.]  
+[Add one honest sentence about what you personally learned from using Wireshark and the Python analyzer.]
 
-## 9. Files in this repository
+## 9. Repository files
 
-| File | Purpose |
-|---|---|
-| `analyze_pcap.py` | Capture analyzer (Python standard library only) |
-| `my_findings.md` | Analyzer output for my capture |
-| `make_sample_pcap.py`, `sample_lab_traffic.pcap`, `sample_findings.md` | Synthetic sample used to test the tool (fake data, not from a real network) |
-| `screenshots/` | Wireshark evidence |
+- `analyze_pcap.py` — analyzer
+- `FINDINGS.md` — working notes and outstanding verification items
+- `make_sample_pcap.py`, `sample_lab_traffic.pcap`, `sample_findings.md` — synthetic test data and sample output
+- `tests/test_analyze_pcap.py` — regression tests
+- `screenshots/` — screenshots; confirm each screenshot's purpose before referencing it
