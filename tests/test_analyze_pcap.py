@@ -70,7 +70,7 @@ class AnalyzerCliTests(unittest.TestCase):
 
     def test_truncated_capture_fails_with_clear_error(self):
         broken = self.workdir / "broken.pcap"
-        broken.write_bytes(b"\\xd4\\xc3\\xb2\\xa1")
+        broken.write_bytes(bytes.fromhex("d4c3b2a1"))
         result = subprocess.run(
             [sys.executable, str(ANALYZER), str(broken)],
             text=True,
