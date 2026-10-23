@@ -1,69 +1,71 @@
-# Findings: aa.pcapng
+# Findings: `aa.pcapng` — working notes
 
-Capture of my own Kali Linux lab VM (VirtualBox NAT, VM address `10.0.2.15`), 964 packets, analysed with Wireshark and `analyze_pcap.py`.
+**Status: needs final Wireshark verification before submission.** These notes describe a personal Kali Linux VirtualBox NAT capture. The notes report 964 packets and VM address `10.0.2.15`. Do not treat draft counts or interpretations as final until checked against the original capture.
 
-## Summary
+## Draft summary
 
-| # | Finding | Severity | Status |
-|---|---|---|---|
-| 1 | Cleartext HTTP (port 80) traffic | Medium | Reported by analyzer (1 packet); confirm with the Wireshark `http` filter |
-| 2 | Failed HTTP connection to neverssl.com (SYN retransmissions, then RST) | Info | Confirmed in Wireshark (packets 938 to 964) |
-| 3 | IPv6 traffic not decoded by the analyzer (11 packets) | Info | Confirmed in Wireshark (ICMPv6, IPv6 TCP and DNS) |
-| 4 | Duplicate DNS response and ICMP "Port unreachable" | Info | Confirmed in Wireshark (packets 948 to 950) |
-| 5 | Large UDP flow to `162.159.138.232` (491 packets) | Info | Confirm protocol with `ip.addr == 162.159.138.232` |
+| # | Observation | Draft status |
+|---|---|---|
+| 1 | TCP data on port 80 | Possible cleartext HTTP indicator; confirm application payload |
+| 2 | Failed connection attempt to `neverssl.com` | Informational; verify packet sequence and endpoint tuple |
+| 3 | IPv6 traffic not decoded by analyzer | Reported in notes; confirm protocol hierarchy |
+| 4 | Duplicate DNS response and ICMP port unreachable | Reported in notes; confirm packet details |
+| 5 | Large UDP flow to `162.159.138.232` | Reported in notes; do not infer application without protocol evidence |
 
-No port scans, ARP spoofing, credentials in cleartext, ICMP flooding or DNS tunnelling were detected.
+No port scan, ARP conflict, credential-like text, high ICMP volume or long DNS label was reported by the current analyzer run. Re-run the analyzer against the original capture before submission and compare its output with these notes.
 
-## Finding 1: Cleartext HTTP traffic (Medium)
+## Observation 1: TCP data on port 80
 
-- **Evidence:** the analyzer counted 1 TCP packet carrying data on port 80. Screenshot: `screenshots/http-filter.png`.
-- **Risk:** HTTP is unencrypted. Anyone on the network path can read or change the content, including cookies and form data.
-- **How to verify:** Wireshark filter `http` (or `tcp.port == 80 && tcp.len > 0`). Record the destination and the request line here: `[fill in]`.
-- **Recommendation:** use HTTPS only, turn on the browser's HTTPS-only mode, use a VPN on untrusted networks, and add HSTS on servers.
+- **Potential severity:** Medium only if valid unencrypted HTTP is confirmed.
+- **Draft evidence:** Analyzer reportedly counted one TCP packet carrying data on port 80.
+- **Verify:** In Wireshark, try `tcp.port == 80 && tcp.len > 0` and then `http`. Inspect packet details and Follow TCP Stream. Record the packet number, source/destination tuple and request line or response status only if visible.
+- **Risk:** Confirmed HTTP content is unencrypted. Do not claim credentials, cookies or personal information were exposed unless the packet actually shows that.
+- **Recommendation:** Prefer HTTPS; configure redirects and HSTS on servers where appropriate.
 
-## Finding 2: Failed connection to neverssl.com (Info)
+**Unresolved discrepancy:** The notes below say the connection to `neverssl.com` did not send an HTTP request, but the port-80 data indicator has not been tied to a specific stream. Check the packet number and TCP stream. They may be separate flows; do not attribute one to the other without evidence.
 
-- **Evidence:** DNS resolved `neverssl.com` to `34.223.124.45`. The VM sent a TCP SYN to port 80 and retransmitted it five times (packets 938 to 957) with no SYN-ACK. At packet 964 the server answered `RST, ACK` and the connection closed. No HTTP request was sent.
-- **Meaning:** a connectivity problem on the lab network, not an attack. A parallel IPv6 attempt also failed with ICMPv6 "No route to destination" (packet 946).
-- **Verification filters:** `ip.addr == 34.223.124.45`, `tcp.analysis.retransmission`
-- **Recommendation:** for monitoring, repeated SYN retransmissions to one host are a useful signal for outages or filtering.
+## Observation 2: Failed connection attempt
 
-## Finding 3: IPv6 traffic (Info)
+- **Draft evidence:** Notes say DNS resolved `neverssl.com` to `34.223.124.45`, TCP SYN retransmissions occurred, and a reset was later seen.
+- **Verify with filters:** `ip.addr == 34.223.124.45` and `tcp.analysis.retransmission`. Confirm the exact packet numbers and whether the final reset belongs to the same connection.
+- **Interpretation:** A failed connection can be caused by service availability, filtering or network conditions. By itself, it is not evidence of an attack.
 
-- **Evidence:** ICMPv6 neighbor solicitation and advertisement, router advertisement from `52:54:00:12:35:00` (the VirtualBox NAT gateway), multicast listener reports, and IPv6 DNS and TCP.
-- **Meaning:** normal for a modern network. The analyzer decodes IPv4 only, so these appear as "Other" (11 packets).
-- **Recommendation:** if IPv6 is not needed on a network, disable it or apply the same firewall and monitoring rules as IPv4, because unmonitored IPv6 can hide traffic.
+## Observation 3: IPv6 traffic
 
-## Finding 4: Duplicate DNS response (Info)
+The previous notes report 11 packets that the IPv4-focused analyzer categorised as “Other”. [VERIFY in Wireshark that these are IPv6/ICMPv6 packets and update the count if needed.] IPv6 is outside the analyzer's current decoded path, so these packets should not be interpreted as malicious just because the script did not decode them.
 
-- **Evidence:** the AAAA response for `neverssl.com` arrived twice (packets 948 and 949) and the VM answered with ICMP "Destination unreachable (Port unreachable)" (packet 950).
-- **Meaning:** harmless here, caused by a duplicated reply in the virtual network. In general, unexpected duplicate or unsolicited DNS responses can indicate DNS spoofing attempts, so they are worth checking.
-- **Recommendation:** use DNSSEC-validating resolvers and monitor for DNS responses that do not match a request.
+## Observation 4: DNS and ICMP
 
-## Finding 5: Large UDP flow (Info)
+The previous notes report a duplicate AAAA response for `neverssl.com` and an ICMP destination-unreachable/port-unreachable packet. [VERIFY packet numbers, DNS transaction ID, query/response matching and ICMP details.] Duplicate responses can have benign causes; do not label them spoofing without stronger evidence.
 
-- **Evidence:** `162.159.138.232` sent 491 of 964 packets, mostly UDP. The DNS names looked up include `discord.gg` and `discord.com`.
-- **Assessment:** `[after checking in Wireshark, state what it is, for example QUIC or Discord voice/video]`
-- **Recommendation:** baseline normal traffic per host and alert on large flows to unfamiliar destinations.
+## Observation 5: Large UDP flow
 
-## Checks that found nothing
+- **Draft evidence:** Notes report 491 of 964 packets involving `162.159.138.232`, mostly UDP.
+- **Verify:** Use `ip.addr == 162.159.138.232`; inspect UDP ports, packet direction, decoded protocol and stream context.
+- **Do not assume:** DNS lookups for `discord.gg` or `discord.com` do not by themselves prove this flow is Discord voice/video or QUIC.
+- **Recommendation:** Baseline expected traffic and investigate large unexplained flows in context.
 
-| Check | Result |
-|---|---|
-| Credentials in cleartext | None |
-| TCP SYN port scan (15+ ports from one source) | None |
-| ARP spoofing (one IP, several MACs) | None (4 ARP packets, one conflict-free gateway reply) |
-| ICMP flood (50+ packets from one source) | None (10 ICMP packets, all pings to `8.8.8.8` and one port-unreachable) |
-| Long DNS labels (tunnelling) | None |
+## Checks reported as not triggering
+
+| Check | Draft result | Meaning |
+|---|---|---|
+| Credential-like patterns | None reported | Does not prove no credentials were sent |
+| TCP SYN scan (15+ distinct ports) | None reported | Only this simple threshold was checked |
+| ARP IP/MAC conflict | None reported | Only conflicts visible to this capture and rule |
+| ICMP volume (50+ packets/source) | None reported | Does not rule out other ICMP patterns |
+| DNS label longer than 40 characters | None reported | Does not rule out all DNS tunnelling |
 
 ## Method
 
-1. Captured on `eth0` in Wireshark and saved as `aa.pcapng`.
-2. Ran `python3 analyze_pcap.py aa.pcapng -o my_findings.md`.
-3. Confirmed the results manually in Wireshark with display filters.
+1. Capture your own lab traffic or use an approved sample.
+2. Run `python3 analyze_pcap.py aa.pcapng -o my_findings.md`.
+3. Verify each indicator in Wireshark.
+4. Save only screenshots that contain relevant, readable evidence and no private information.
+5. Update `REPORT.md` with the confirmed packet details and your own learning.
 
 ## Limitations
 
-- Single machine, short capture.
-- Most traffic is encrypted, so only metadata (addresses, ports, DNS names) can be analysed.
-- The analyzer decodes IPv4 over Ethernet only; thresholds are simple and findings are indicators, not proof.
+- Single host and short capture.
+- Encrypted traffic limits payload inspection.
+- Analyzer primarily decodes IPv4 over Ethernet.
+- Heuristics can miss threats and produce false positives; results are indicators, not proof.
